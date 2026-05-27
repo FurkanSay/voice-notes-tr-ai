@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 interface DroppedFile {
   path: string;
@@ -51,6 +52,57 @@ function joinTranscript(segments: Segment[]): string {
   return segments.map((s) => s.text.trim()).join(" ");
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toMarkdown(
+  file: DroppedFile,
+  transcript: TranscribeResult,
+  extraction: ExtractionResult | null,
+): string {
+  const title = file.name.replace(/\.[^.]+$/, "");
+  const lines: string[] = [];
+  lines.push(`# ${title}`);
+  lines.push("");
+  lines.push(`**Tarih:** ${todayIso()}`);
+  lines.push(`**Süre:** ${formatTime(transcript.duration)}`);
+  lines.push(
+    `**Dil:** ${transcript.language} (${Math.round(transcript.language_probability * 100)}%)`,
+  );
+  lines.push("");
+
+  if (extraction && extraction.actions.length > 0) {
+    lines.push("## Aksiyonlar");
+    lines.push("");
+    for (const a of extraction.actions) {
+      const prefix = a.assignee ? `**${a.assignee}** — ` : "";
+      lines.push(`- ${prefix}${a.text}`);
+    }
+    lines.push("");
+  }
+
+  if (extraction && extraction.decisions.length > 0) {
+    lines.push("## Kararlar");
+    lines.push("");
+    for (const d of extraction.decisions) {
+      lines.push(`- ${d}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Transkript");
+  lines.push("");
+  for (const s of transcript.segments) {
+    lines.push(
+      `\`${formatTime(s.start)}–${formatTime(s.end)}\` ${s.text.trim()}`,
+    );
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
 export default function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [file, setFile] = useState<DroppedFile | null>(null);
@@ -67,6 +119,9 @@ export default function App() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
   const [extractMs, setExtractMs] = useState<number | null>(null);
+
+  // Markdown export
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
@@ -101,6 +156,19 @@ export default function App() {
     setExtraction(null);
     setExtractError(null);
     setExtractMs(null);
+  }
+
+  async function pickFile() {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Ses Dosyaları", extensions: AUDIO_EXTS }],
+    });
+    if (typeof selected === "string") {
+      setWarning(null);
+      resetResults();
+      setFile({ path: selected, name: baseName(selected) });
+    }
   }
 
   async function runTranscribe() {
@@ -151,6 +219,19 @@ export default function App() {
     }
   }
 
+  async function copyMarkdown() {
+    if (!file || !transcript) return;
+    const md = toMarkdown(file, transcript, extraction);
+    try {
+      await navigator.clipboard.writeText(md);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API erişimi engellenmişse: prompt fallback
+      window.prompt("Kopyala (Ctrl+C):", md);
+    }
+  }
+
   return (
     <main className="app">
       <h1>Voice Notes TR</h1>
@@ -197,6 +278,14 @@ export default function App() {
           <div className="dropzone__idle">
             <div className="dropzone__icon">🎙️</div>
             <div>{isDragOver ? "Bırak" : "Ses dosyasını buraya sürükle"}</div>
+            <div className="dropzone__or">veya</div>
+            <button
+              className="btn"
+              onClick={pickFile}
+              type="button"
+            >
+              Dosya Seç…
+            </button>
             <div className="dropzone__exts">
               {AUDIO_EXTS.map((e) => `.${e}`).join("  ·  ")}
             </div>
@@ -209,6 +298,22 @@ export default function App() {
         <p className="warning warning--error">
           Transcribe hatası: {transcribeError}
         </p>
+      )}
+
+      {transcript && (
+        <div className="export">
+          <button
+            className={"btn btn--primary" + (copied ? " btn--success" : "")}
+            onClick={copyMarkdown}
+            disabled={transcribing || extracting}
+            type="button"
+          >
+            {copied ? "✓ Kopyalandı" : "Markdown'a Kopyala"}
+          </button>
+          <span className="export__hint">
+            Notion · Obsidian · Slack — yapıştır ve gönder
+          </span>
+        </div>
       )}
 
       {transcript && (

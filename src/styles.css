@@ -68,8 +68,14 @@ html, body, #root {
   opacity: 0.85;
 }
 
+.dropzone__or {
+  margin: 0.65rem 0 0.5rem 0;
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
 .dropzone__exts {
-  margin-top: 0.5rem;
+  margin-top: 0.75rem;
   font-size: 0.8rem;
   opacity: 0.45;
 }
@@ -190,6 +196,27 @@ html, body, #root {
 .btn--small {
   padding: 0.3rem 0.7rem;
   font-size: 0.8rem;
+}
+
+.btn--success {
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
+.export {
+  margin-top: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(78, 161, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(78, 161, 255, 0.04);
+}
+
+.export__hint {
+  font-size: 0.85rem;
+  opacity: 0.65;
 }
 
 .actions {

@@ -58,6 +58,7 @@ models/
 
 # Test fixtures (use download script, not commit)
 test-fixtures/audio/
+voice/
 *.wav
 *.mp3
 *.m4a

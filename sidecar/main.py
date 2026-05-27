@@ -9,6 +9,9 @@ Response shape: {"id": "...", "result": {...}} | {"id": "...", "error": {"code":
 """
 from __future__ import annotations
 
+# Must be imported before anything that loads ctranslate2 (faster_whisper) on Windows.
+import _cuda_setup  # noqa: F401
+
 import json
 import os
 import sys

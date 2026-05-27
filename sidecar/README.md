@@ -10,6 +10,22 @@ uv venv --python 3.10
 uv pip install --python .venv\Scripts\python.exe faster-whisper
 ```
 
+### GPU (CUDA) için ek paketler — Windows
+
+ctranslate2 4.x Windows'ta nvidia-cublas-cu12 / nvidia-cudnn-cu12 paketlerinin
+DLL'lerini otomatik PATH'e eklemiyor. İki şey gerek:
+
+```powershell
+uv pip install --python .venv\Scripts\python.exe nvidia-cublas-cu12 'nvidia-cudnn-cu12>=9.0,<10.0'
+```
+
+`_cuda_setup.py` modülü import edildiğinde bu DLL'leri runtime'da yükler.
+`main.py` ve `benchmark.py` başında zaten import ediliyor — manuel bir şey
+yapmana gerek yok.
+
+Linux'ta bu paketler genellikle CTranslate2 wheel'iyle birlikte ya da
+sistem CUDA toolkit'i ile sağlanır; `_cuda_setup.py` Linux'ta no-op.
+
 ## Çalıştırma (dev)
 
 ```powershell

@@ -102,9 +102,49 @@ def handle_transcribe(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def handle_transcribe_pcm(params: dict[str, Any]) -> dict[str, Any]:
+    """Transcribe raw PCM bytes (live recording chunks).
+
+    Expects:
+      - pcm_b64: base64-encoded little-endian int16 mono samples at 16kHz
+      - language: ISO code (default "tr")
+    Returns:
+      - language, language_probability, duration, segments (start/end in s)
+    """
+    import base64
+    import numpy as np
+
+    pcm_b64 = params["pcm_b64"]
+    language = params.get("language", "tr")
+
+    raw = base64.b64decode(pcm_b64)
+    # int16 little-endian → float32 in [-1, 1]
+    pcm_i16 = np.frombuffer(raw, dtype=np.int16)
+    audio = pcm_i16.astype(np.float32) / 32768.0
+
+    model = get_model()
+    segments_iter, info = model.transcribe(
+        audio,
+        language=language,
+        beam_size=5,
+        vad_filter=False,  # we already gated by VAD on Rust side
+    )
+    segments = [
+        {"start": s.start, "end": s.end, "text": s.text}
+        for s in segments_iter
+    ]
+    return {
+        "language": info.language,
+        "language_probability": info.language_probability,
+        "duration": info.duration,
+        "segments": segments,
+    }
+
+
 METHODS = {
     "ping": handle_ping,
     "transcribe": handle_transcribe,
+    "transcribe_pcm": handle_transcribe_pcm,
     "release_model": handle_release_model,
 }
 

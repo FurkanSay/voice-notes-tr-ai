@@ -219,6 +219,81 @@ html, body, #root {
   opacity: 0.65;
 }
 
+.recorder {
+  margin-top: 1.25rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 200ms, background-color 200ms;
+}
+
+.recorder--active {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.recorder__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.recorder__hint {
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+.recorder__time {
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+.btn--danger {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.vumeter {
+  flex: 1;
+  height: 0.5rem;
+  min-width: 8rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vumeter__bar {
+  height: 100%;
+  background: linear-gradient(90deg, #16a34a, #facc15, #ef4444);
+  transition: width 60ms linear;
+}
+
+.live-segments {
+  margin: 0.85rem 0 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 35vh;
+  overflow-y: auto;
+}
+
+.live-segments li {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.live-segments li:last-child {
+  border-bottom: none;
+}
+
 .actions {
   list-style: none;
   padding: 0;

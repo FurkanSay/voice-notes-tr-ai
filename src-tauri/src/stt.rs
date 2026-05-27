@@ -167,8 +167,25 @@ impl Sidecar {
         )
     }
 
+    /// Transcribe raw PCM (16kHz mono i16) — for live recording chunks.
+    pub fn transcribe_pcm(&mut self, pcm: &[i16]) -> Result<TranscribeResult, SttError> {
+        use base64::Engine;
+        // i16 LE → bytes
+        let mut bytes = Vec::with_capacity(pcm.len() * 2);
+        for &s in pcm {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        let pcm_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        self.request(
+            "transcribe_pcm",
+            serde_json::json!({
+                "pcm_b64": pcm_b64,
+                "language": "tr",
+            }),
+        )
+    }
+
     /// Free the Whisper model from RAM/VRAM. Lazy reload on next `transcribe`.
-    /// We call this before invoking Ollama to free ~3GB so Gemma can load.
     pub fn release_model(&mut self) -> Result<(), SttError> {
         let _: serde_json::Value = self.request("release_model", serde_json::json!({}))?;
         Ok(())

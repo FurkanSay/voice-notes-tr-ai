@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
 interface DroppedFile {
@@ -29,6 +30,12 @@ interface ActionItem {
 interface ExtractionResult {
   actions: ActionItem[];
   decisions: string[];
+}
+
+interface LiveSegment {
+  offset_s: number;
+  duration_s: number;
+  text: string;
 }
 
 const AUDIO_EXTS = ["m4a", "mp3", "wav", "flac", "ogg", "aac", "opus", "webm"];
@@ -122,6 +129,51 @@ export default function App() {
 
   // Markdown export
   const [copied, setCopied] = useState(false);
+
+  // Live recording
+  const [recording, setRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [liveSegments, setLiveSegments] = useState<LiveSegment[]>([]);
+  const [level, setLevel] = useState(0);
+  const recordingStartedAt = useRef<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  // Live recording: listen for backend events
+  useEffect(() => {
+    // StrictMode mounts effects twice in dev — without explicit cancellation
+    // the listener Promises resolve AFTER cleanup, leaving stale subscriptions.
+    let cancelled = false;
+    const cleanups: UnlistenFn[] = [];
+
+    Promise.all([
+      listen<number>("recording:level", (e) => setLevel(e.payload)),
+      listen<LiveSegment>("recording:segment", (e) =>
+        setLiveSegments((prev) => [...prev, e.payload]),
+      ),
+      listen<string>("recording:error", (e) => setRecordingError(e.payload)),
+    ]).then((fns) => {
+      if (cancelled) {
+        for (const f of fns) f();
+      } else {
+        cleanups.push(...fns);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      for (const f of cleanups) f();
+    };
+  }, []);
+
+  // Elapsed timer while recording
+  useEffect(() => {
+    if (!recording) return;
+    const id = window.setInterval(() => {
+      const t0 = recordingStartedAt.current;
+      if (t0 !== null) setElapsed((Date.now() - t0) / 1000);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [recording]);
 
   useEffect(() => {
     const unlistenPromise = getCurrentWebview().onDragDropEvent((event) => {
@@ -219,6 +271,31 @@ export default function App() {
     }
   }
 
+  async function startRecording() {
+    setRecordingError(null);
+    setLiveSegments([]);
+    setLevel(0);
+    setElapsed(0);
+    try {
+      await invoke("start_recording");
+      recordingStartedAt.current = Date.now();
+      setRecording(true);
+    } catch (e) {
+      setRecordingError(String(e));
+    }
+  }
+
+  async function stopRecording() {
+    try {
+      await invoke("stop_recording");
+    } catch (e) {
+      setRecordingError(String(e));
+    } finally {
+      setRecording(false);
+      recordingStartedAt.current = null;
+    }
+  }
+
   async function copyMarkdown() {
     if (!file || !transcript) return;
     const md = toMarkdown(file, transcript, extraction);
@@ -235,7 +312,71 @@ export default function App() {
   return (
     <main className="app">
       <h1>Voice Notes TR</h1>
-      <p className="hint">Toplantı kaydını pencereye sürükleyip bırak.</p>
+      <p className="hint">
+        Toplantı kaydını sürükleyip bırak, ya da mikrofondan canlı kaydet.
+      </p>
+
+      <section className={"recorder" + (recording ? " recorder--active" : "")}>
+        <div className="recorder__row">
+          {!recording ? (
+            <button
+              className="btn btn--primary"
+              onClick={startRecording}
+              disabled={!!file || transcribing}
+              type="button"
+            >
+              ● Kayda Başla
+            </button>
+          ) : (
+            <button
+              className="btn btn--danger"
+              onClick={stopRecording}
+              type="button"
+            >
+              ■ Kayda Dur
+            </button>
+          )}
+          {recording && (
+            <>
+              <div className="vumeter" aria-label="Ses seviyesi">
+                <div
+                  className="vumeter__bar"
+                  style={{ width: `${Math.min(100, level * 200)}%` }}
+                />
+              </div>
+              <span className="recorder__time">
+                {formatTime(elapsed)} · {liveSegments.length} segment
+              </span>
+            </>
+          )}
+          {!recording && liveSegments.length === 0 && (
+            <span className="recorder__hint">
+              Mikrofonu konuşmaya hazırla, butona bas, konuşmayı bitirdiğinde
+              tekrar bas.
+            </span>
+          )}
+        </div>
+
+        {recordingError && (
+          <p className="warning warning--error">
+            Kayıt hatası: {recordingError}
+          </p>
+        )}
+
+        {liveSegments.length > 0 && (
+          <ol className="live-segments">
+            {liveSegments.map((s, i) => (
+              <li key={i}>
+                <span className="segments__ts">
+                  {formatTime(s.offset_s)}–
+                  {formatTime(s.offset_s + s.duration_s)}
+                </span>
+                <span className="segments__text">{s.text}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
 
       <div
         className={

@@ -63,22 +63,33 @@ Toplantı kaydını dosya olarak yükle → transkript + aksiyon maddeleri çık
 
 **Çıkış kriteri:** ✅ M4A/MP3 yükle, transkript çıkar, Türkçe aksiyon/karar al, Markdown'a kopyala. **V1 satılabilir.**
 
-## Faz 2 — Canlı mod (1.5 hafta)
+## Faz 2 — Canlı mod (1.5 hafta planlanmıştı, parça parça gidiyoruz)
 
-Mikrofondan canlı dinle, gerçek zamanlı transkript ve aksiyon güncellemesi.
+### Faz 2a — Canlı transkript (LLM yok) ✅ (2026-05-28)
 
-### Hafta 2 (ikinci yarı)
-- [ ] cpal ile mikrofon yakalama (16kHz mono, ring buffer)
-- [ ] VAD entegrasyonu (önce webrtc-vad dene, gerekirse silero-vad'a geç)
-- [ ] Konuşma chunk'ları → faster-whisper'a parçalar halinde gönder
-- [ ] Live transcript akışı UI'a (event-based)
+- [x] cpal ile mikrofon yakalama (varsayılan input device, F32/I16/U16 desteği)
+- [x] Mono mix + rubato ile native rate → 16kHz resample, i16 dönüşüm
+- [x] webrtc-vad ile chunking (VeryAggressive, 400ms silence, 1.5-8s chunk)
+- [x] Sidecar yeni metot: `transcribe_pcm` (base64-encoded i16 LE → numpy float32)
+- [x] Rust ↔ frontend event stream (`recording:level`, `recording:segment`, `recording:error`)
+- [x] "Kayda Başla / Dur" butonları, VU meter, canlı büyüyen segment listesi
+- [x] cpal Stream `!Send` çözümü: kayıt thread'i Stream'i sahip kalır, AppState sadece stop kanalını tutar
 
-### Hafta 3
-- [ ] N saniyede bir (örn. 60s) LLM çağrısı → güncel aksiyon listesi
-- [ ] "Kayda başla / dur" butonları, görsel ses seviyesi göstergesi
-- [ ] Canlı modda kaydı dosyaya da yaz (backup)
+### Faz 2a sırasında öğrenilenler
+- Windows'ta cpal Stream `!Send` — Tauri state'inde tutulamaz, dedikated thread şart
+- React StrictMode dev'de useEffect iki kez çalışır → listener'lar duplicate olur → segment iki kere yazıldı → Promise.all + cancellation flag ile çözüldü
+- Gürültülü ortamda VAD Quality modu hep "voice" der → chunk kapanmaz → VeryAggressive moda alındı
+- Sürekli konuşmada uzun bekleme: MAX_CHUNK 15s → 8s, segment 8s'de bir gelir
 
-**Çıkış kriteri:** Mikrofona konuş, ekranda canlı yazıya çevrildiğini gör, 1 dakika sonra aksiyon maddeleri güncellensin.
+### Faz 2b — Periyodik LLM çağrısı (sonraki oturum)
+
+- [ ] Delta-style prompt (sadece yeni segmentler + önceki aksiyon listesi)
+- [ ] N saniyede bir (örn. 60s) extract_actions çağrısı, paneli güncelle
+- [ ] Bellek stratejisi: Whisper sürekli açıkken Gemma için RAM/VRAM nasıl açılır
+- [ ] Canlı modda kaydı dosyaya da yaz (backup, .wav)
+
+**Çıkış kriteri (Faz 2a):** ✅ Mikrofona konuş, ekranda canlı yazıya çevrildiğini gör.
+**Çıkış kriteri (Faz 2b):** Mikrofona konuş, 60 saniye sonra aksiyon maddeleri güncellensin.
 
 ## Faz 3 — Polish + dağıtım (1 hafta)
 

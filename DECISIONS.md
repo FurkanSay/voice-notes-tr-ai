@@ -132,23 +132,63 @@ Mimari ve teknoloji kararları. Her karar için: **karar / alternatifler / niye 
 
 ---
 
-## 9. Whisper model seçimi: large-v3-turbo (varsayılan), benchmark sonrası tekrar değerlendir
+## 9. Whisper model seçimi: large-v3-turbo (varsayılan) — benchmark ile doğrulandı
 
-**Karar:** Default `large-v3-turbo`. Faz 0'da küçük bir Türkçe WER benchmark çalıştır: `small`, `medium`, `large-v3-turbo` — sayılarla seç.
+**Karar:** Default `large-v3-turbo`. Faz 0 benchmark'ı doğruladı — hem kalite hem hız liderliği bu modelde.
 
-**Niye:** "large-v3-turbo" ARCHITECTURE'da seçilmişti ama ölçülmedi. Türkçe için yeterli olabilir küçük modeller, GPU baskısı azalır.
+### Faz 0 benchmark sonuçları (2026-05-27)
 
-**Geri dönüş maliyeti:** Düşük. `WHISPER_MODEL` env değişkeni ile kontrol ediyoruz, kod değişmiyor.
+**Donanım:** RTX 3050 Ti Laptop, 4GB VRAM, CUDA 12, float16 compute_type.
+**Audio:** 34.75s Türkçe mikrofon testi konuşması (gürültülü, kısa cümleler).
+
+| Model | İlk yükleme | Transcribe | xRT | Karakter | Kalite notu |
+|---|---|---|---|---|---|
+| tiny | 26s | (manuel) | — | 312 | "biriyeti", "kayısız", "yapayacak" — uydurmuş kelimeler, tekrarlı |
+| small | 5.4s | 4.2s | 8.2× | 276 | "ben nasıl fısaldım" (anlamsız), "bir öte" (mikrofon yerine), noktalama yok |
+| medium | 16.0s | 5.2s | 6.7× | 269 | "yapay zeka" doğru, noktalama düzgün, "gürültü" (mikrofon yerine) |
+| **large-v3-turbo** | 396s (1.5GB HF download) | **3.1s** | **11.1×** | 293 | Cümle yapısı kusursuz, noktalama mükemmel, sadece "gürültü" hatası kaldı |
+
+### Şaşırtıcı bulgular
+
+- **large-v3-turbo en hızlı transcribe!** Turbo varyantın decoder katmanları küçültülmüş — hem daha kaliteli hem 1.5-1.7× hızlı.
+- İlk yükleme 6.5 dakika (HuggingFace download). Sonraki açılışlar disk cache'den ~10s.
+- 4GB VRAM yeterli — float16 büyük model tek başına ~1.6GB.
+- "gürültü" ↔ "mikrofon" hatası model bağımsız — kelime bazlı; prompt engineering veya post-processing gerek (V2).
+
+### Niye `large-v3-turbo` (small/medium değil)
+
+1. Kalite farkı dramatik — small'da yarım kelimeler var
+2. Hız avantajı turbo'da (kalitesi yüksek + hızı en yüksek = double win)
+3. VRAM yeterli (FP16 ile ~1.6GB)
+4. İlk açılış maliyetini in-app wizard zaten karşılıyor (karar #4)
+
+**Geri dönüş maliyeti:** Düşük. `WHISPER_MODEL` env değişkeni ile kontrol ediyoruz. Yavaş CPU'lu kullanıcı `medium`'a düşebilir, kod değişmez.
 
 ---
 
-## 10. LLM model: Gemma 3 4B (Ollama)
+## 10. LLM model: Gemma 3 4B (Ollama) — Türkçe testi doğruladı
 
 **Karar:** `gemma3:4b` Ollama üzerinden. Q4_K_M kuantizasyon (Ollama default).
 
 **Alternatifler:** Llama 3.2 3B, Mistral 7B, Qwen 2.5 7B
 
 **Niye:** Gemma 3 Türkçe'de Llama 3.2'den iyi (Gemini'den damıtılmış). 4B sweet spot — 7B Q4 ~5GB VRAM, 4GB'ımız yetmez.
+
+### Faz 0 smoke test (2026-05-27)
+
+**Donanım:** RTX 3050 Ti Laptop, 4GB VRAM. **Donanım algılama:** Ollama otomatik CUDA gördü ve kullandı.
+
+**Prompt:** 4 kişilik Türkçe toplantı transkripti → action_items + decisions JSON çıkarımı.
+
+| Metrik | Değer | Notu |
+|---|---|---|
+| Toplam süre | 30.2s | cold-start dahil (model VRAM'e yüklendi) |
+| Prompt eval | 152 token / 0.8s | prefill çok hızlı (~190 t/s) |
+| Generate | 169 token / 7.6s | **22.2 t/s** |
+| Aksiyon doğruluğu | 3/3 (atayan kişi dahil) | "yarınki sunum için slayt → Ahmet" gibi nüansı yakaladı |
+| Karar doğruluğu | 1/2 — "Bütçe 50 bin lira" doğru | "Gerisini sonra görüşürüz" yanlışlıkla karar olarak listelendi (prompt engineering ile çözülür) |
+
+**Hız sonucu:** ARCHITECTURE.md'deki "~12 t/s CPU" tahmininin 1.8× üzerinde (GPU). DECISIONS karar #18'deki hedef (<25s aksiyon, GPU) güzel tutuyor.
 
 **Geri dönüş maliyeti:** Düşük. Ollama API ile model adı değiştirmek tek satır.
 

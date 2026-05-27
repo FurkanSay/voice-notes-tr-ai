@@ -37,24 +37,31 @@ Her üç bileşenin tek tek çalıştığını doğrula + repo iskeleti + karar 
 
 **Çıkış kriteri:** ✅ 3 bileşen çalışıyor, model seçimi sayısal, kararlar belgeli, repo public.
 
-## Faz 1 — Dosya modu MVP (1.5 hafta)
+## Faz 1 — Dosya modu MVP ✅ (tamamlandı 2026-05-28, tek günde)
 
 Toplantı kaydını dosya olarak yükle → transkript + aksiyon maddeleri çıkar.
 
 ### Hafta 1
-- [ ] Tauri pencere + sürükle-bırak alanı (React)
-- [ ] Rust tarafı: dosya path'ini al, symphonia ile decode et, 16kHz mono WAV üret
-- [ ] Python sidecar yapısı: stdin'den path al, stdout'a JSON transcript bas
-- [ ] Tauri Rust ↔ Python sidecar IPC: `tauri::process::Command`
-- [ ] Transcript UI: zaman damgalı segmentler
+- [x] Tauri pencere + sürükle-bırak alanı (React, `getCurrentWebview().onDragDropEvent`)
+- [x] ~~Rust tarafı: symphonia ile decode~~ — gereksizdi, faster-whisper m4a/mp3/wav'ı PyAV ile direkt okuyor
+- [x] Python sidecar yapısı (`sidecar/main.py` — JSON-over-stdio, ping/transcribe/release_model)
+- [x] Tauri Rust ↔ Python sidecar IPC (`stt.rs` — Sidecar struct, shutdown lifecycle)
+- [x] Transcript UI: zaman damgalı segmentler
 
 ### Hafta 2 (ilk yarı)
-- [ ] Ollama HTTP client (Rust): `reqwest` ile `/api/generate`
-- [ ] Prompt iterasyonu: "kararlar + aksiyon maddeleri" çıkarımı için
-- [ ] Çıktı UI'da kararlar/aksiyonlar paneli
-- [ ] Markdown export butonu
+- [x] Ollama HTTP client (`llm.rs` — reqwest, gemma3:4b, format=json, keep_alive=0s)
+- [x] Prompt iterasyonu: Türkçe "aksiyon + karar" çıkarımı
+- [x] Çıktı UI'da kararlar/aksiyonlar paneli (assignee badge'leri ile)
+- [x] Markdown export butonu (clipboard, başlık + tarih + aksiyon + karar + transkript)
+- [x] **Bonus:** Native dosya seçici (Tauri dialog plugin)
 
-**Çıkış kriteri:** MP3 yükle, transkript ve aksiyonlarla Markdown çıktı al.
+### Faz 1 sırasında keşfedilip çözülen ek sorunlar
+- 4GB VRAM + 16GB RAM'de Whisper + Gemma birlikte sığmaz → sidecar full shutdown stratejisi
+- Ollama 5dk keep_alive sonraki transcribe'ı `mkl_malloc` ile çakıştırıyor → `keep_alive: "0s"`
+- Tauri sync command UI thread'i bloke ediyor → async + spawn_blocking
+- Windows ctranslate2 nvidia DLL'leri bulamıyor → `_cuda_setup.py` preload helper
+
+**Çıkış kriteri:** ✅ M4A/MP3 yükle, transkript çıkar, Türkçe aksiyon/karar al, Markdown'a kopyala. **V1 satılabilir.**
 
 ## Faz 2 — Canlı mod (1.5 hafta)
 

@@ -53,6 +53,13 @@ def handle_ping(_params: dict[str, Any]) -> dict[str, Any]:
     return {"pong": True}
 
 
+def handle_load_model(_params: dict[str, Any]) -> dict[str, Any]:
+    """Pre-warm the Whisper model. Used before live recording so the first
+    chunk doesn't stall behind a 10-15s cold-start model load."""
+    get_model()
+    return {"loaded": True}
+
+
 def handle_release_model(_params: dict[str, Any]) -> dict[str, Any]:
     """Drop the loaded Whisper model — frees both VRAM and RAM.
 
@@ -143,6 +150,7 @@ def handle_transcribe_pcm(params: dict[str, Any]) -> dict[str, Any]:
 
 METHODS = {
     "ping": handle_ping,
+    "load_model": handle_load_model,
     "transcribe": handle_transcribe,
     "transcribe_pcm": handle_transcribe_pcm,
     "release_model": handle_release_model,

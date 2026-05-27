@@ -79,24 +79,45 @@ async fn extract_actions(
 
 /// Start microphone capture. Spawns a host thread that owns the cpal Stream
 /// (which is `!Send` on Windows) and emits transcription events.
+///
+/// Pre-warms the Whisper sidecar before returning so the first audio chunk
+/// doesn't stall behind a 10-15s model load. The frontend should expect
+/// this call to take a few seconds on first use after an extract pass
+/// (since extract_actions shuts down the sidecar).
 #[tauri::command]
 async fn start_recording(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    {
+        let g = state.recording.lock().map_err(|e| e.to_string())?;
+        if g.is_some() {
+            return Err("zaten kayıtta".into());
+        }
+    }
+
+    // Pre-warm: spawn sidecar (if needed) and load Whisper model. Blocks until
+    // ready — UI shows "Hazırlanıyor..." during this period.
+    let sidecar_for_warm = Arc::clone(&state.sidecar);
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let mut guard = sidecar_for_warm.lock().map_err(|e| e.to_string())?;
+        let sc = ensure_sidecar(&mut guard)?;
+        sc.load_model().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    // Now spawn the recording host thread that owns cpal Stream
     let mut g = state.recording.lock().map_err(|e| e.to_string())?;
     if g.is_some() {
         return Err("zaten kayıtta".into());
     }
-
     let (stop_tx, stop_rx) = bounded::<()>(1);
     let sidecar = Arc::clone(&state.sidecar);
-
     std::thread::Builder::new()
         .name("recording-host".into())
         .spawn(move || run_recording_host(app, sidecar, stop_rx))
         .map_err(|e| e.to_string())?;
-
     *g = Some(RecordingHandle { stop: stop_tx });
     Ok(())
 }

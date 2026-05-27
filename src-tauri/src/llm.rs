@@ -52,6 +52,11 @@ struct GenerateRequest<'a> {
 #[derive(Serialize)]
 struct GenerateOptions {
     temperature: f32,
+    /// Force Ollama to put the model on GPU. We've just shut down the sidecar
+    /// (which freed ~1.6GB VRAM); free system RAM might still be tight, so
+    /// without this Ollama falls back to CPU and dies on `mkl_malloc`. 99 =
+    /// "as many layers as fit", which for Gemma 3 4B Q4 is the whole model.
+    num_gpu: i32,
 }
 
 #[derive(Deserialize)]
@@ -65,7 +70,10 @@ pub async fn extract_actions(transcript: &str) -> Result<ExtractionResult, LlmEr
         prompt: build_prompt(transcript),
         stream: false,
         format: "json", // Ollama'nın JSON modu — sözdizimi garantili
-        options: GenerateOptions { temperature: 0.2 },
+        options: GenerateOptions {
+            temperature: 0.2,
+            num_gpu: 99,
+        },
         keep_alive: KEEP_ALIVE,
     };
 

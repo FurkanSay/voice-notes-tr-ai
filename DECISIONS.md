@@ -143,6 +143,21 @@ Gerçekte iki ayrı kaynak sıkışıyordu:
 
 **Geri dönüş maliyeti:** Orta. Karar şimdi 3 yerde uygulanmış (stt.rs shutdown, lib.rs extract_actions, llm.rs keep_alive). 16GB'tan fazla RAM ya da 8GB+ VRAM'li donanımda bu hile gereksizleşir; gelecekte donanım algıla, eğer yeterli kaynak varsa shutdown'u atla.
 
+### Canlı modda bilinen sınır (2026-05-28, Faz 2b sonrası)
+
+4GB VRAM'li referans makinede canlı mod auto-extract %70-90 başarılı, ara sıra `Ollama 500 memory layout cannot be allocated` döndürüyor. Sebep: VRAM fragmentation. Whisper sidecar shutdown'dan sonra `nvidia-smi` 3.7 GiB free gösterse de, Gemma 3.1 GiB **contiguous** blok bulamıyor — özellikle NVIDIA Broadcast gibi başka CUDA uygulamaları sırada VRAM tutuyorsa. Üç pratik etki:
+
+1. **Faz 2a değeri ulaşmış durumda:** canlı transkript + Markdown export her zaman çalışıyor.
+2. **Auto-extract bonustur**, garanti değil. Frontend dostane hata mesajıyla yönlendiriyor.
+3. **Kullanıcı "Tekrar Çıkar"a basabilir**, ya da "NVIDIA Broadcast'i kapat" gibi bir öneri görüyor.
+
+**Donanım rehberi (README'ye eklendi):**
+- 4GB VRAM: dosya modu sorunsuz, canlı mod transkript sorunsuz, auto-extract ara sıra
+- 6GB+ VRAM: hepsi sorunsuz, fragmentation marjı geniş
+- 8GB+ VRAM: shutdown numarası bile gereksiz, ileride donanım algılayıcı eklenebilir
+
+**Gelecek opsiyonu:** Faz 3'te Gemma 3 1B fallback'i kullanıcı seçimi olarak sun (~1GB, kalite düşer ama 4GB VRAM'de garanti çalışır).
+
 ---
 
 ## 9. Whisper model seçimi: large-v3-turbo (varsayılan) — benchmark ile doğrulandı

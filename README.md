@@ -97,13 +97,16 @@ Mimari kararların **niye**si: [DECISIONS.md](./DECISIONS.md). Genel akış: [AR
 
 ## Donanım gereksinimleri
 
-| Seviye | CPU | RAM | GPU | Transcribe (60 dk audio) |
-|---|---|---|---|---|
-| Minimum | 4-core (AVX2) | 8 GB | yok | ~20 dk |
-| Önerilen | 8-core modern | 16 GB | yok | ~8 dk |
-| Optimal | 8-core modern | 16 GB | NVIDIA 4GB+ VRAM | ~2 dk |
+| Seviye | CPU | RAM | GPU | Dosya modu | Canlı mod |
+|---|---|---|---|---|---|
+| Minimum | 4-core (AVX2) | 8 GB | yok | 60dk → ~20dk | transkript OK, auto-extract yavaş |
+| Önerilen | 8-core modern | 16 GB | yok | 60dk → ~8dk | transkript OK, auto-extract orta |
+| **İyi** | 8-core modern | 16 GB | NVIDIA 4GB+ VRAM | 60dk → ~2dk | transkript hızlı, auto-extract %70-90 |
+| Optimal | 8-core modern | 16 GB | NVIDIA 6GB+ VRAM | 60dk → ~2dk | hepsi sorunsuz, fragmentation marjı geniş |
 
-Referans makine: i7-12700H + RTX 3050 Ti Laptop (4GB VRAM). 4GB VRAM ile Whisper + Gemma birlikte çalışırken bazı bellek manevraları gerekiyor; detay [DECISIONS.md #8](./DECISIONS.md).
+Referans makine: i7-12700H + RTX 3050 Ti Laptop (4GB VRAM). 4GB VRAM'de Whisper (1.6GB) + Gemma (3.1GB) toplam 4.7GB — fit etmek için bazı bellek manevraları gerekiyor (sidecar shutdown, keep_alive=0s). Canlı mod auto-extract ara sıra fail edebilir; transkript ve Markdown export her durumda çalışır. Detay [DECISIONS.md #8](./DECISIONS.md).
+
+**4GB VRAM kullanıcısı ipucu:** Canlı modda auto-extract sırasında NVIDIA Broadcast / Discord overlay gibi başka CUDA uygulamalarını kapatmak fragmentation'ı azaltır.
 
 ## Geliştirici notları
 

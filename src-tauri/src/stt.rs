@@ -157,6 +157,13 @@ impl Sidecar {
         Ok(r.get("pong").and_then(|v| v.as_bool()).unwrap_or(false))
     }
 
+    /// Pre-warm the Whisper model so the first transcribe doesn't pay the
+    /// 10-15s cold-start. Use before starting live recording.
+    pub fn load_model(&mut self) -> Result<(), SttError> {
+        let _: serde_json::Value = self.request("load_model", serde_json::json!({}))?;
+        Ok(())
+    }
+
     pub fn transcribe(&mut self, audio_path: &str) -> Result<TranscribeResult, SttError> {
         self.request(
             "transcribe",

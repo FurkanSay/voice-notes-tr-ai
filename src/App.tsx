@@ -59,40 +59,67 @@ function joinTranscript(segments: Segment[]): string {
   return segments.map((s) => s.text.trim()).join(" ");
 }
 
+function friendlyExtractError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("500") ||
+    lower.includes("memory") ||
+    lower.includes("alloc")
+  ) {
+    return (
+      "GPU/RAM dolu olduğu için aksiyon çıkarımı yapılamadı. " +
+      "Transkript hazır — Markdown'a Kopyala ile dışa aktarabilir, " +
+      "ya da arkaplan uygulamalarını (NVIDIA Broadcast vb.) kapatıp Tekrar Çıkar diyebilirsin."
+    );
+  }
+  if (lower.includes("connection") || lower.includes("refused")) {
+    return "Ollama'ya bağlanılamadı. Ollama çalışıyor mu? (Tray simgesini kontrol et.)";
+  }
+  return raw;
+}
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function toMarkdown(
-  file: DroppedFile,
-  transcript: TranscribeResult,
-  extraction: ExtractionResult | null,
-): string {
-  const title = file.name.replace(/\.[^.]+$/, "");
+interface MarkdownSource {
+  title: string;
+  duration_s: number | null;
+  language: string | null;
+  language_probability: number | null;
+  segments: { start: number; end: number; text: string }[];
+  extraction: ExtractionResult | null;
+}
+
+function toMarkdown(src: MarkdownSource): string {
   const lines: string[] = [];
-  lines.push(`# ${title}`);
+  lines.push(`# ${src.title}`);
   lines.push("");
   lines.push(`**Tarih:** ${todayIso()}`);
-  lines.push(`**Süre:** ${formatTime(transcript.duration)}`);
-  lines.push(
-    `**Dil:** ${transcript.language} (${Math.round(transcript.language_probability * 100)}%)`,
-  );
+  if (src.duration_s !== null) {
+    lines.push(`**Süre:** ${formatTime(src.duration_s)}`);
+  }
+  if (src.language && src.language_probability !== null) {
+    lines.push(
+      `**Dil:** ${src.language} (${Math.round(src.language_probability * 100)}%)`,
+    );
+  }
   lines.push("");
 
-  if (extraction && extraction.actions.length > 0) {
+  if (src.extraction && src.extraction.actions.length > 0) {
     lines.push("## Aksiyonlar");
     lines.push("");
-    for (const a of extraction.actions) {
+    for (const a of src.extraction.actions) {
       const prefix = a.assignee ? `**${a.assignee}** — ` : "";
       lines.push(`- ${prefix}${a.text}`);
     }
     lines.push("");
   }
 
-  if (extraction && extraction.decisions.length > 0) {
+  if (src.extraction && src.extraction.decisions.length > 0) {
     lines.push("## Kararlar");
     lines.push("");
-    for (const d of extraction.decisions) {
+    for (const d of src.extraction.decisions) {
       lines.push(`- ${d}`);
     }
     lines.push("");
@@ -100,7 +127,7 @@ function toMarkdown(
 
   lines.push("## Transkript");
   lines.push("");
-  for (const s of transcript.segments) {
+  for (const s of src.segments) {
     lines.push(
       `\`${formatTime(s.start)}–${formatTime(s.end)}\` ${s.text.trim()}`,
     );
@@ -132,6 +159,7 @@ export default function App() {
 
   // Live recording
   const [recording, setRecording] = useState(false);
+  const [startingRecording, setStartingRecording] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [liveSegments, setLiveSegments] = useState<LiveSegment[]>([]);
   const [level, setLevel] = useState(0);
@@ -259,15 +287,18 @@ export default function App() {
       setExtraction(r);
       setExtractMs(performance.now() - t0);
     } catch (e) {
-      setExtractError(String(e));
+      setExtractError(friendlyExtractError(String(e)));
     } finally {
       setExtracting(false);
     }
   }
 
-  function retryExtract() {
+  function retryExtractFromCurrent() {
     if (transcript) {
       void runExtract(joinTranscript(transcript.segments));
+    } else if (liveSegments.length > 0) {
+      const text = liveSegments.map((s) => s.text.trim()).join(" ");
+      if (text.trim()) void runExtract(text);
     }
   }
 
@@ -276,12 +307,18 @@ export default function App() {
     setLiveSegments([]);
     setLevel(0);
     setElapsed(0);
+    setExtraction(null);
+    setExtractError(null);
+    setExtractMs(null);
+    setStartingRecording(true);
     try {
-      await invoke("start_recording");
+      await invoke("start_recording"); // Bekler: sidecar + model load
       recordingStartedAt.current = Date.now();
       setRecording(true);
     } catch (e) {
       setRecordingError(String(e));
+    } finally {
+      setStartingRecording(false);
     }
   }
 
@@ -294,17 +331,59 @@ export default function App() {
       setRecording(false);
       recordingStartedAt.current = null;
     }
+    // Kayıt sonunda biriken segmentler varsa otomatik aksiyon çıkarımı.
+    // extract_actions sidecar'ı zaten kapatıyor → Gemma GPU'ya rahat yüklenir.
+    // Kullanıcı isterse sonra "Tekrar Çıkar" ile yeniden çalıştırabilir.
+    setTimeout(() => {
+      setLiveSegments((current) => {
+        if (current.length > 0) {
+          const text = current.map((s) => s.text.trim()).join(" ");
+          if (text.trim()) void runExtract(text);
+        }
+        return current;
+      });
+    }, 0);
+  }
+
+  function buildMarkdownSource(): MarkdownSource | null {
+    if (transcript && file) {
+      return {
+        title: file.name.replace(/\.[^.]+$/, ""),
+        duration_s: transcript.duration,
+        language: transcript.language,
+        language_probability: transcript.language_probability,
+        segments: transcript.segments,
+        extraction,
+      };
+    }
+    if (liveSegments.length > 0) {
+      const last = liveSegments[liveSegments.length - 1];
+      const total = last.offset_s + last.duration_s;
+      return {
+        title: `Canlı kayıt — ${todayIso()}`,
+        duration_s: total,
+        language: "tr",
+        language_probability: null,
+        segments: liveSegments.map((s) => ({
+          start: s.offset_s,
+          end: s.offset_s + s.duration_s,
+          text: s.text,
+        })),
+        extraction,
+      };
+    }
+    return null;
   }
 
   async function copyMarkdown() {
-    if (!file || !transcript) return;
-    const md = toMarkdown(file, transcript, extraction);
+    const src = buildMarkdownSource();
+    if (!src) return;
+    const md = toMarkdown(src);
     try {
       await navigator.clipboard.writeText(md);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard API erişimi engellenmişse: prompt fallback
       window.prompt("Kopyala (Ctrl+C):", md);
     }
   }
@@ -322,10 +401,10 @@ export default function App() {
             <button
               className="btn btn--primary"
               onClick={startRecording}
-              disabled={!!file || transcribing}
+              disabled={!!file || transcribing || startingRecording}
               type="button"
             >
-              ● Kayda Başla
+              {startingRecording ? "Hazırlanıyor…" : "● Kayda Başla"}
             </button>
           ) : (
             <button
@@ -441,12 +520,12 @@ export default function App() {
         </p>
       )}
 
-      {transcript && (
+      {(transcript || liveSegments.length > 0) && (
         <div className="export">
           <button
             className={"btn btn--primary" + (copied ? " btn--success" : "")}
             onClick={copyMarkdown}
-            disabled={transcribing || extracting}
+            disabled={transcribing || extracting || recording}
             type="button"
           >
             {copied ? "✓ Kopyalandı" : "Markdown'a Kopyala"}
@@ -457,73 +536,70 @@ export default function App() {
         </div>
       )}
 
-      {transcript && (
-        <>
-          <section className="panel">
-            <header className="panel__header">
-              <h2>Aksiyonlar &amp; Kararlar</h2>
-              <button
-                className="btn btn--small"
-                onClick={retryExtract}
-                disabled={extracting}
-                type="button"
-              >
-                {extracting ? "Çıkarılıyor…" : "Tekrar Çıkar"}
-              </button>
-            </header>
+      {(extraction || extracting || extractError) && (
+        <section className="panel">
+          <header className="panel__header">
+            <h2>Aksiyonlar &amp; Kararlar</h2>
+            <button
+              className="btn btn--small"
+              onClick={retryExtractFromCurrent}
+              disabled={extracting || recording}
+              type="button"
+            >
+              {extracting ? "Çıkarılıyor…" : "Tekrar Çıkar"}
+            </button>
+          </header>
 
-            {extractError && (
-              <p className="warning warning--error">
-                Çıkarım hatası: {extractError}
-              </p>
-            )}
+          {extractError && (
+            <p className="warning warning--error">
+              Çıkarım hatası: {extractError}
+            </p>
+          )}
 
-            {extraction && (
-              <>
-                <div className="panel__meta">
-                  {extraction.actions.length} aksiyon ·{" "}
-                  {extraction.decisions.length} karar
-                  {extractMs !== null && (
-                    <> · {(extractMs / 1000).toFixed(1)}s</>
-                  )}
-                </div>
+          {extraction && (
+            <>
+              <div className="panel__meta">
+                {extraction.actions.length} aksiyon · {extraction.decisions.length} karar
+                {extractMs !== null && <> · {(extractMs / 1000).toFixed(1)}s</>}
+              </div>
 
-                {extraction.actions.length > 0 ? (
-                  <ul className="actions">
-                    {extraction.actions.map((a, i) => (
-                      <li key={i} className="action">
-                        <span className="action__bullet">▸</span>
-                        <span className="action__text">{a.text}</span>
-                        {a.assignee && (
-                          <span className="action__assignee">
-                            {a.assignee}
-                          </span>
-                        )}
+              {extraction.actions.length > 0 ? (
+                <ul className="actions">
+                  {extraction.actions.map((a, i) => (
+                    <li key={i} className="action">
+                      <span className="action__bullet">▸</span>
+                      <span className="action__text">{a.text}</span>
+                      {a.assignee && (
+                        <span className="action__assignee">{a.assignee}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                !extracting && (
+                  <p className="panel__empty">Aksiyon maddesi bulunamadı.</p>
+                )
+              )}
+
+              {extraction.decisions.length > 0 && (
+                <>
+                  <h3 className="panel__subhead">Kararlar</h3>
+                  <ul className="decisions">
+                    {extraction.decisions.map((d, i) => (
+                      <li key={i}>
+                        <span className="decisions__bullet">●</span> {d}
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  !extracting && (
-                    <p className="panel__empty">Aksiyon maddesi bulunamadı.</p>
-                  )
-                )}
+                </>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
-                {extraction.decisions.length > 0 && (
-                  <>
-                    <h3 className="panel__subhead">Kararlar</h3>
-                    <ul className="decisions">
-                      {extraction.decisions.map((d, i) => (
-                        <li key={i}>
-                          <span className="decisions__bullet">●</span> {d}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </>
-            )}
-          </section>
-
+      {transcript && (
+        <>
           <section className="panel">
             <header className="panel__header">
               <h2>Transkript</h2>

@@ -1,0 +1,81 @@
+# Rust / Tauri
+target/
+src-tauri/target/
+src-tauri/gen/
+Cargo.lock.bak
+*.pdb
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+*.spec
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Local config / secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Models (downloaded at runtime, not in repo)
+models/
+*.bin
+*.gguf
+*.onnx
+*.safetensors
+
+# Test fixtures (use download script, not commit)
+test-fixtures/audio/
+*.wav
+*.mp3
+*.m4a
+*.flac
+!sidecar/tests/fixtures/tiny-silence.wav
+
+# SQLite local
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# PyInstaller output
+sidecar/dist/
+sidecar/build/
+
+# Tauri sidecar binaries (built artifacts)
+src-tauri/binaries/
+
+# Bundle output
+src-tauri/target/release/bundle/

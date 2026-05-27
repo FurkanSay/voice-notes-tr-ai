@@ -1,0 +1,265 @@
+# Decisions
+
+Mimari ve teknoloji kararları. Her karar için: **karar / alternatifler / niye / geri dönüş maliyeti**.
+
+İlk yazım: 2026-05-27.
+
+---
+
+## 1. STT motoru: faster-whisper (Python sidecar)
+
+**Karar:** Speech-to-text için `faster-whisper` Python sidecar'ı kullan. Rust ile JSON-over-stdio konuş.
+
+**Alternatifler:**
+- `whisper-rs` (whisper.cpp Rust binding) — Python'u tamamen elemiş olurduk
+- `whisper.cpp` ayrı binary olarak sidecar — Rust bağımlılığı yok ama Python'unkine benzer dış-process problemi var
+
+**Niye:** ARCHITECTURE.md bu yolu seçmişti. CTranslate2 backend INT8 quantization ile rekabetçi hız + olgun Python ekosistemi (HF Hub, transformers entegrasyonu). Sidecar yönetiminin maliyetini #5 ve #11 numaralı kararlarla bastırıyoruz.
+
+**Geri dönüş maliyeti (faster-whisper → whisper-rs):** Orta. `stt.rs` modülü tek bir trait/fonksiyon imzası arkasında olduğu sürece, sidecar yerine in-process whisper-rs çağrısı sürebilir. Sidecar lifecycle/IPC kodu silinir; supervisor yok olur. Tahmini 2-3 günlük rewrite.
+
+---
+
+## 2. Tauri sürümü: v2
+
+**Karar:** Tauri **2.x**. Yeni projede v1 başlamak teknik borç.
+
+**Alternatifler:** Tauri v1 — daha eski, daha çok örnek var.
+
+**Niye:** v2 mid-2025'ten beri GA. Yeni `tauri-plugin-shell` sidecar API'sı, daha iyi capability sistemi, mobile path açık.
+
+**Geri dönüş maliyeti:** Yüksek. v2'den v1'e gitmenin neredeyse hiçbir mantığı yok — v2'de kalıyoruz.
+
+---
+
+## 3. Konuşmacı ayrımı (diarization): V2'ye
+
+**Karar:** V1'de **yok**. Şema bugün `speaker_id INTEGER NULL` alanını içerir, V1 boyunca hep null.
+
+**Alternatifler:**
+- V1'e ekle (pyannote.audio)
+- Hiç olmasın
+
+**Niye:** Solo proje, 4-6 hafta zaten dolu. pyannote ayrı Python bağımlılığı + GPU memory + complex tuning. Şemayı baştan doğru yaparsak V2 eklemesi düz.
+
+**Geri dönüş maliyeti:** Düşük. Şema hazır, sadece yeni Python kütüphanesi + UI'da renkli badge.
+
+---
+
+## 4. İlk açılışta model indirme (Whisper + Gemma): in-app wizard
+
+**Karar:** İlk açılışta uygulama içi wizard ~4GB model indirir (Whisper ~1.5GB + Gemma 3 4B ~2.5GB). Resume desteği, AppData/Local'e saklar.
+
+**Alternatifler:**
+- Kullanıcıya manuel script çalıştırt (kötü UX)
+- Modeli installer'a göm (50MB → 4GB+ installer; Tauri avantajını yok eder)
+
+**Niye:** Tek temas noktası, kullanıcı uygulamayı açıp "İleri" basar. Whisper'ı kendimiz indiririz (HF Hub), Gemma için `ollama pull gemma3:4b` shell çağrısı.
+
+**Geri dönüş maliyeti:** Orta. Installer + bundle'a model gömmeye dönmek = build pipeline değişir, installer 4GB+ olur. Yapmayız.
+
+---
+
+## 5. Python sidecar bundling: PyInstaller `--onefile`
+
+**Karar:** Production'da PyInstaller ile single-file exe → `src-tauri/binaries/whisper-sidecar-{target-triple}.exe`. Tauri v2 `externalBin` config'i ile OS-aware bundle.
+
+**Alternatifler:**
+- Kullanıcıya `pip install` yaptır (kullanıcıdan Python ister, ekstra kurulum)
+- `embedded-python` Rust crate'i (deneysel)
+- Sidecar'ı kaldır → whisper-rs (#1 numaralı kararı tersine çevirmek demek)
+
+**Niye:** Tek dosya, kullanıcı Python görmez. PyInstaller olgun, faster-whisper destekli.
+
+**Boyut beklentisi:** PyInstaller + ctranslate2 + faster-whisper + onnxruntime ≈ **+200-300MB** installer. ARCHITECTURE'daki 50MB hedefi gerçekçi değil — **revize: ~250MB installer + 4GB ilk-açılış model indirme**.
+
+**Geri dönüş maliyeti:** Düşük-orta. PyInstaller config sadece bir spec dosyası, değiştirmek kolay.
+
+---
+
+## 6. Sidecar IPC protokolü: line-delimited JSON over stdio
+
+**Karar:** Her satır bir mesaj. Request `{id, method, params}`, response `{id, result | error}`. JSON-RPC stili ama hafif. stderr log için.
+
+**Alternatifler:**
+- Length-prefixed framing (binary, daha sağlam ama daha karmaşık)
+- HTTP localhost server (port çakışması, firewall, gereksiz overhead)
+- gRPC (overkill)
+
+**Niye:** Debug edilebilir (cat ile gözle gör), implement basit, throughput yeterli (transcript I/O ses dosyası okumakla domine olur, JSON parse marjinal).
+
+**Geri dönüş maliyeti:** Düşük. Tek protokol katmanı, değişirse hem Rust hem Python tarafında ~50 satır.
+
+---
+
+## 7. Sidecar lifecycle: long-running daemon + Rust supervisor
+
+**Karar:** App başında bir kez sidecar başlat, app kapanınca durdur. Per-request başlatma yok (model RAM'e her seferinde yüklenmez). Rust tarafında supervisor: exit görürse 1s/3s/10s exponential backoff ile restart, frontend'e `sidecar:status` event'i emit.
+
+**Alternatifler:**
+- Per-request başlat (model load her seferinde 25s — kabul edilemez)
+- Multiple sidecar workers (gereksiz karmaşıklık, single user app)
+
+**Niye:** Model load maliyeti tek seferlik. Crash recovery şart — sandbox/OS sebepli Python crash'inde kullanıcıyı kaybetmeyelim.
+
+**Geri dönüş maliyeti:** Düşük.
+
+---
+
+## 8. GPU/CPU stratejisi: CPU default, GPU auto-detect
+
+**Karar:**
+- **Faster-whisper:** `device="cuda", compute_type="float16"` eğer CUDA varsa, aksi halde `device="cpu", compute_type="int8"`. Tespit `ctranslate2.get_cuda_device_count()` ile.
+- **Ollama:** zaten otomatik CUDA/Metal tespiti yapar; bizim tarafta kod yok.
+- **Installer:** CPU-only build. CUDA isteyen kullanıcı NVIDIA CUDA Toolkit kurar + dokümandaki opt-in adımı izler.
+
+**Bu makinedeki durum (referans):** RTX 3050 Ti Laptop, **4GB VRAM**. CUDA 12.8 driver. `ctranslate2.get_cuda_device_count()` → 1.
+
+**VRAM bütçesi (4GB):**
+| Yük | VRAM |
+|---|---|
+| Whisper large-v3-turbo INT8 | ~900MB |
+| Whisper large-v3-turbo FP16 | ~1.6GB |
+| Gemma 3 4B Q4_K_M | ~3GB |
+| Whisper INT8 + Gemma Q4 birlikte | ~4GB (sınır) |
+
+**Pratik kural:**
+- **Dosya modu:** sıralı pipeline → Whisper biter, VRAM serbest, sonra Gemma. İkisi GPU'da OK.
+- **Canlı mod:** Whisper GPU (latency kritik), **Gemma CPU** (her 60s'de bir, i7-12700H ile ~90s yeter).
+- **Acil çıkış:** Whisper `medium` modeline geç (~750MB VRAM, ikisi GPU'da rahat) — Türkçe doğruluk düşer, ölçmeden bilinmez.
+
+**Geri dönüş maliyeti:** Düşük. Karar runtime'da, kullanıcı override'ı kolay.
+
+---
+
+## 9. Whisper model seçimi: large-v3-turbo (varsayılan), benchmark sonrası tekrar değerlendir
+
+**Karar:** Default `large-v3-turbo`. Faz 0'da küçük bir Türkçe WER benchmark çalıştır: `small`, `medium`, `large-v3-turbo` — sayılarla seç.
+
+**Niye:** "large-v3-turbo" ARCHITECTURE'da seçilmişti ama ölçülmedi. Türkçe için yeterli olabilir küçük modeller, GPU baskısı azalır.
+
+**Geri dönüş maliyeti:** Düşük. `WHISPER_MODEL` env değişkeni ile kontrol ediyoruz, kod değişmiyor.
+
+---
+
+## 10. LLM model: Gemma 3 4B (Ollama)
+
+**Karar:** `gemma3:4b` Ollama üzerinden. Q4_K_M kuantizasyon (Ollama default).
+
+**Alternatifler:** Llama 3.2 3B, Mistral 7B, Qwen 2.5 7B
+
+**Niye:** Gemma 3 Türkçe'de Llama 3.2'den iyi (Gemini'den damıtılmış). 4B sweet spot — 7B Q4 ~5GB VRAM, 4GB'ımız yetmez.
+
+**Geri dönüş maliyeti:** Düşük. Ollama API ile model adı değiştirmek tek satır.
+
+---
+
+## 11. LLM context stratejisi (canlı modda): delta-style
+
+**Karar:** Canlı modda her 60s'de bir LLM'i çağırırken, **tüm transkripti değil** önceki action_items listesi + son N saniyenin yeni segmentlerini gönder. Model "yeni action item var mı? Mevcut listeyi güncelle" diye prompt'lanır.
+
+**Alternatifler:**
+- Her 60s'de full transcript gönder (12K token × 60 = bir saatte 720K token = saçma savurganlık)
+- Hiyerarşik özetleme (her 5 dakikada bir özetle, özetleri birleştir — Faz 3 değerlendirmesi)
+
+**Niye:** Lokal LLM kıymetli. Delta ile 60s'lik chunk ≈ 200 token; prompt overhead'le 1K token altı. Saniye sayalı.
+
+**Geri dönüş maliyeti:** Düşük. Prompt iterasyonu konusu, kod düz.
+
+---
+
+## 12. VAD: webrtc-vad ile başla, gerekirse silero-vad'a geç
+
+**Karar:** İlk versiyon `webrtc-vad` (hafif, hızlı, eski). Doğruluk yetersizse `silero-vad` (ONNX, ~12MB ekstra).
+
+**Niye:** webrtc-vad single-call C kütüphanesi, Rust binding'i temiz. Silero ONNX runtime ister, biraz daha ağır ama daha doğru.
+
+**Geri dönüş maliyeti:** Düşük. `vad.rs` interface'i arkasında ya da modül swap. Onnxruntime zaten sidecar'da var (faster-whisper'ın VAD bağımlılığı), kullanılabilir.
+
+---
+
+## 13. Canlı mod chunking stratejisi: VAD-gated, min 3s max 15s
+
+**Karar:** VAD konuşma başını tespit eder, buffer'a alır, N sessiz frame sonra "segment kapalı" der ve Whisper'a yollar. Çıkış kriteri: minimum 3s konuşma, maksimum 15s (uzun monolog'ları kes).
+
+**Alternatifler:** Rolling window (her 30s'de Whisper çağır) — context daha iyi ama 8s latency hedefi tutmaz.
+
+**Niye:** VAD doğal cümle sınırlarında keser → Whisper daha doğru, kullanıcı "canlı" hisseder. 8s hedefi tutar.
+
+**Geri dönüş maliyeti:** Düşük.
+
+---
+
+## 14. SQLite şeması: Faz 0'da tasarla, Faz 1'de implement
+
+**Karar:** Şema [SCHEMA.md](./SCHEMA.md)'de bugün tasarlandı. Implementation Faz 1 sonunda (dosya modu pipeline çalıştığında). Dosya modu ve canlı mod aynı tablolara yazar — Faz 2'de uyumsuzluk çıkmasın.
+
+**Geri dönüş maliyeti:** Orta. Schema migration zor olabilir ama tek-user SQLite, hızlı toparlanır.
+
+---
+
+## 15. Frontend state: useState ile başla, Zustand'a "ihtiyaç olunca" geç
+
+**Karar:** Faz 1 (dosya modu) için `useState` yeter. Faz 2 (canlı mod) event akışı patladığında Zustand ekle.
+
+**Niye:** KISS + rule-of-three. Erken store eklemek = boşa karmaşıklık.
+
+**Geri dönüş maliyeti:** Düşük. Refactor ~yarım gün.
+
+---
+
+## 16. Hata tipleri: `thiserror` modül başına Error enum
+
+**Karar:** Her modül kendi `Error` enum'ını `thiserror::Error` ile tanımlar. Top-level / main'de `anyhow` kullanma sınırlı (sadece kompozisyon noktalarında).
+
+**Niye:** Public API yüzeylerinde explicit hata = caller akıllı recovery yapabilir. Anyhow her yerde = "bir şey oldu, bilmem ne" — production'da yetersiz.
+
+**Geri dönüş maliyeti:** Düşük.
+
+---
+
+## 17. Logging: tracing + tracing-subscriber
+
+**Karar:** `tracing` crate'i + `tracing-subscriber` env_filter. JSON logger şimdilik gerek yok.
+
+**Niye:** Tauri zaten tokio kullanıyor → tracing en doğru fit. Span-aware → async kod debug'ı çok daha kolay.
+
+**Geri dönüş maliyeti:** Düşük.
+
+---
+
+## 18. Performance hedefleri (REVİZE)
+
+ARCHITECTURE.md'deki hedefler "modern 8-core CPU + opsiyonel GPU" varsayımı altında geçerli. Eski/zayıf CPU için bu hedefler tutmaz.
+
+| Metrik | Referans donanım | Hedef | ARCHITECTURE.md'deki eski hedef |
+|---|---|---|---|
+| 60dk transcript (dosya modu) | i7-12700H + RTX 3050 Ti | <2 dk (GPU), <8 dk (CPU) | <5 dk |
+| Canlı mod chunk latency | i7-12700H + RTX 3050 Ti | <3s (GPU), <8s (CPU-only) | <8s |
+| Aksiyon çıkarımı (60dk transcript) | i7-12700H | <90s (CPU), <25s (GPU) | <90s |
+| Bellek (idle) | — | <300MB | <300MB |
+| Bellek (canlı kayıt) | — | <1.5GB (Whisper+Gemma yüklü) | <1GB |
+| **Installer boyutu** | — | **~250MB** (PyInstaller bundle) | <50MB (gerçekçi değildi) |
+| İlk açılış model indirme | — | ~4GB tek seferlik | (yoktu) |
+
+---
+
+## 19. Test stratejisi (Faz 1'de minimal)
+
+**Karar:**
+- Unit test: pure fonksiyonlar (VAD threshold, prompt formatting). Audio/LLM/STT I/O'yu mock'lama.
+- Entegrasyon test: 5sn'lik Türkçe WAV ile uçtan uca pipeline, output şeması doğrulanır.
+- E2E (Tauri WebDriver): Faz 3'te.
+
+**Test fixture'ları:** Birkaç Türkçe WAV. `test-fixtures/audio/` git LFS değil, **`download-fixtures.ps1` script** ile çekilir (HF dataset veya self-hosted URL'den). `.gitignore`'da `*.wav` zaten ignore.
+
+**Geri dönüş maliyeti:** Düşük.
+
+---
+
+## Karar değiştirmenin protokolü
+
+Karar değişirse:
+1. İlgili kararı **silme** — üstünü çiz (markdown `~~strikethrough~~`) ve "Bkz. Karar X" diye link ver
+2. Yeni karar olarak alta ekle (sıradaki numara), tarih düş
+3. Aynı commit'te değişiklik kodu ile birlikte gönder (history bütünleşik kalsın)

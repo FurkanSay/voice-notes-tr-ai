@@ -123,12 +123,25 @@ Mimari ve teknoloji kararları. Her karar için: **karar / alternatifler / niye 
 | Gemma 3 4B Q4_K_M | ~3GB |
 | Whisper INT8 + Gemma Q4 birlikte | ~4GB (sınır) |
 
-**Pratik kural:**
-- **Dosya modu:** sıralı pipeline → Whisper biter, VRAM serbest, sonra Gemma. İkisi GPU'da OK.
-- **Canlı mod:** Whisper GPU (latency kritik), **Gemma CPU** (her 60s'de bir, i7-12700H ile ~90s yeter).
-- **Acil çıkış:** Whisper `medium` modeline geç (~750MB VRAM, ikisi GPU'da rahat) — Türkçe doğruluk düşer, ölçmeden bilinmez.
+**Pratik kural (Faz 1 testi sırasında 2026-05-28'de iki kez revize edildi):**
 
-**Geri dönüş maliyeti:** Düşük. Karar runtime'da, kullanıcı override'ı kolay.
+İlk varsayım: dosya modu sıralı, Whisper biter VRAM serbest, Gemma rahatça yüklenir. **Yanlış çıktı.**
+
+Gerçekte iki ayrı kaynak sıkışıyordu:
+
+1. **ctranslate2 Whisper'ı transcribe sonrası VRAM+RAM'de tutuyor** (cache, mantıklı — sonraki call 25s yerine 3s). `release_model` ile Python tarafında modeli düşürmek yetmiyor çünkü…
+2. …**Python process'inin kendisinin CUDA context'i** kalıyor. Ollama'nın free-VRAM probe'u bu yüzden eksik raporluyor (3.7GB free olmasına rağmen 0 görüyor), CPU fallback'ine düşüyor.
+3. CPU fallback'inde Gemma ~3.6GB sistem RAM ister. 16GB makinede tipik kullanıcı %95+ dolu olduğu için bu da 500 düşürür.
+4. Ek olarak: Ollama default `keep_alive=5min`. Bir önceki çıkarımdan kalan Gemma RAM/VRAM'i sonraki transcribe'ın `mkl_malloc` ile çakışmasına neden oluyor.
+
+**Çözüm (uygulanan):**
+- Aksiyon çıkarımına geçmeden **sidecar Python process'ini tamamen kapat** (`Sidecar::shutdown` → stdin EOF + grace + kill). CUDA context tamamen silinir, Ollama tüm VRAM'i görür, Gemma **GPU'da** yüklenir → 30s'de çıkarım.
+- Sonraki transcribe sidecar'ı lazy respawn eder (~10s model reload penalty, kabul edilebilir).
+- Ollama isteğine `keep_alive: "0s"` ekledik → Gemma cevaptan hemen sonra RAM+VRAM'den düşer, sonraki transcribe `mkl_malloc` ile çakışmaz.
+
+**Canlı mod:** Whisper sürekli GPU'da, Gemma her 60s'de bir çağrılacak. O zaman bu shutdown numarası yapılamaz (latency kayıp). Karar Faz 2'ye: Gemma'yı CPU'ya zorla (`num_gpu: 0`), i7-12700H ile ~90s — canlı modda Ollama "delta-only" prompt olduğu için zaten kısa.
+
+**Geri dönüş maliyeti:** Orta. Karar şimdi 3 yerde uygulanmış (stt.rs shutdown, lib.rs extract_actions, llm.rs keep_alive). 16GB'tan fazla RAM ya da 8GB+ VRAM'li donanımda bu hile gereksizleşir; gelecekte donanım algıla, eğer yeterli kaynak varsa shutdown'u atla.
 
 ---
 

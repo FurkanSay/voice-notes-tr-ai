@@ -53,6 +53,29 @@ def handle_ping(_params: dict[str, Any]) -> dict[str, Any]:
     return {"pong": True}
 
 
+def handle_release_model(_params: dict[str, Any]) -> dict[str, Any]:
+    """Drop the loaded Whisper model — frees both VRAM and RAM.
+
+    Needed because Whisper + Gemma together exceed our budget on a 4GB VRAM /
+    16GB RAM machine. The next `transcribe` reloads the model (~10s penalty).
+    See DECISIONS.md #8 (GPU/CPU stratejisi).
+    """
+    global _MODEL
+    released = _MODEL is not None
+    if released:
+        log("Releasing Whisper model from memory")
+        _MODEL = None  # drop reference
+        import gc
+        gc.collect()
+        try:
+            import torch  # noqa: PLC0415 — optional
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+    return {"released": released}
+
+
 def handle_transcribe(params: dict[str, Any]) -> dict[str, Any]:
     """Transcribe an audio file. Returns list of segments + detected language."""
     audio_path = params["audio_path"]
@@ -82,6 +105,7 @@ def handle_transcribe(params: dict[str, Any]) -> dict[str, Any]:
 METHODS = {
     "ping": handle_ping,
     "transcribe": handle_transcribe,
+    "release_model": handle_release_model,
 }
 
 

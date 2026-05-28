@@ -107,6 +107,39 @@ npm run tauri:dev
 4. **■ Kayda Dur** → otomatik aksiyon çıkarımı (~15-30s)
 5. **Markdown'a Kopyala** → live segmentler + aksiyonlar/kararlar
 
+## Markdown export formatı
+
+Voice Notes TR'nin "Markdown'a Kopyala" çıktısı sabit ve **regex-dostu**.
+Downstream sistemler (Odoo wizard, n8n flow, Obsidian script, vb.) bu formata
+güvenebilir.
+
+Kontrat: [docs/markdown-format.md](./docs/markdown-format.md) — bölüm spec'i + Python parser referansı.
+Birebir örnek: [docs/sample-export.md](./docs/sample-export.md).
+
+Özet yapı:
+
+```markdown
+# {başlık}
+
+**Tarih:** YYYY-MM-DD
+**Süre:** M:SS
+**Dil:** tr (98%)
+
+## Aksiyonlar
+- **{Ad}** — {aksiyon metni}
+- {atayan yoksa düz metin}
+
+## Kararlar
+- {karar metni}
+
+## Transkript
+`M:SS–M:SS` {segment metni}
+```
+
+Garanti: bölüm başlıkları (`## Aksiyonlar`, `## Kararlar`, `## Transkript`),
+metadata bold prefix (`**Anahtar:** Değer`), aksiyon ayraç em-dash ` — `,
+transkript zaman ayraç en-dash `–`, tarih ISO `YYYY-MM-DD`.
+
 ## Stack
 
 | Katman | Teknoloji |

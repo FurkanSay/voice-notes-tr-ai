@@ -130,11 +130,15 @@ def handle_transcribe_pcm(params: dict[str, Any]) -> dict[str, Any]:
     audio = pcm_i16.astype(np.float32) / 32768.0
 
     model = get_model()
+    # vad_filter=True: Rust tarafı zaten webrtc-vad ile chunk sınırını çıkardı,
+    # ama faster-whisper'ın dahili Silero VAD'ı chunk kenarındaki gürültüyü
+    # ve sessiz kuyrukları temizleyerek Whisper'ın halüsinasyonunu önler
+    # ("dinlediğiniz için teşekkürler" uydurması, vb.). Maliyet ~50-100ms/chunk.
     segments_iter, info = model.transcribe(
         audio,
         language=language,
         beam_size=5,
-        vad_filter=False,  # we already gated by VAD on Rust side
+        vad_filter=True,
     )
     segments = [
         {"start": s.start, "end": s.end, "text": s.text}

@@ -57,6 +57,47 @@
 6. Her 60 saniyede bir: tüm transcript Ollama'ya → güncellenmiş aksiyonlar
 7. Frontend her event'i pane'lere ekler
 
+## Whisper'ın iç çalışması (kısa)
+
+Whisper bir **encoder-decoder transformer**. İki aşamalı:
+
+1. **Ön-işleme:** Ses → **log-mel spektrogramı**. 16kHz audio 25ms pencerelerle FFT'den geçer, mel ölçeğine eşlenir, log alınır. Sonuç: zaman × 80 mel-bin'lik 2D matris ("sesin görüntüsü").
+2. **Encoder:** Spektrogramı okur, sabit boyutlu attention representation üretir (2D → token serisi).
+3. **Decoder:** Autoregressive — başlangıç token'ından başlar, encoder çıktısına bakarak token-token metin üretir. Cross-attention + sebep maskesi.
+
+### Pratik sonuçlar
+
+- **30 saniyelik pencere kısıtı:** Decoder positional embedding 1500 frame için (30s × 50fps). Daha uzun ses için pencere kayar — gerçek streaming değil, batch.
+- **Halüsinasyon:** Decoder "uygun" token üretmeye eğilimli. Sessiz girişte ezbere ifadeler ("dinlediğiniz için teşekkürler", "Türkçe altyazılar") uydurabilir → VAD filtreleme şart.
+- **Turbo varyantı:** Decoder katmanları 32 → 4 budanmış. Encoder aynı, decode 1.5-2× hızlı. Ama çeviri yok (sadece transcription).
+- **Greedy vs beam search:** `beam_size=5` (default) decoder'a alternatif yolları takip ettirir, kalite artar, hız %20-30 düşer.
+
+### Bizim pipeline'da nereye düşüyor
+
+```
+cpal mic → resample → webrtc-vad → chunk (1.5-8s)
+                                      │
+                                      ▼  (PCM i16 16kHz)
+        ┌──────── faster-whisper sidecar ────────┐
+        │ log-mel hesabı (CPU)                    │
+        │   ▼                                     │
+        │ Whisper encoder (CUDA fp16, ~1.6GB)     │
+        │   ▼                                     │
+        │ Whisper decoder (beam=5, autoregressive)│
+        │   ▼                                     │
+        │ İçerik: segment listesi (start, end, text)│
+        │ + dahili Silero VAD post-filtreleme     │
+        └─────────────────────────────────────────┘
+                                      │
+                                      ▼
+                  Rust app.emit('recording:segment')
+```
+
+Bu detay seviyesi neden önemli? Çünkü **bizim üst-mimari kararlarımız Whisper'ın bu davranışlarına dayanıyor:**
+- 30s pencere → "gerçek streaming değil, chunked batch" tasarımı
+- Decoder halüsinasyonu → VAD-gated chunking + ek Silero filtresi şart
+- Turbo decoder budama → Türkçe için kullanılabilir ama çeviri scope dışı
+
 ## Stack kararları ve gerekçeler
 
 ### Neden Tauri (Electron değil)?

@@ -190,6 +190,10 @@ Gerçekte iki ayrı kaynak sıkışıyordu:
 3. VRAM yeterli (FP16 ile ~1.6GB)
 4. İlk açılış maliyetini in-app wizard zaten karşılıyor (karar #4)
 
+### Turbo'nun bilinen kısıtı — sadece transcription
+
+`large-v3-turbo` decoder katmanları 32 → 4'e budanmış. Bu hız kazandırıyor ama **çeviri (translation) görevini yapamaz** — yalnızca `task="transcribe"`. Bizim akış "Türkçe ses → Türkçe metin" olduğu için sorun değil. Eğer ileride "Türkçe ses → İngilizce metin" gibi bir özellik istenirse `large-v3` (full) modeline geçmek gerek. ROADMAP'te yok, scope dışı.
+
 **Geri dönüş maliyeti:** Düşük. `WHISPER_MODEL` env değişkeni ile kontrol ediyoruz. Yavaş CPU'lu kullanıcı `medium`'a düşebilir, kod değişmez.
 
 ---
@@ -322,6 +326,42 @@ ARCHITECTURE.md'deki hedefler "modern 8-core CPU + opsiyonel GPU" varsayımı al
 **Test fixture'ları:** Birkaç Türkçe WAV. `test-fixtures/audio/` git LFS değil, **`download-fixtures.ps1` script** ile çekilir (HF dataset veya self-hosted URL'den). `.gitignore`'da `*.wav` zaten ignore.
 
 **Geri dönüş maliyeti:** Düşük.
+
+---
+
+## 20. Türkçe WER darboğazı — model büyütmek yerine LoRA fine-tune (V2+)
+
+**Karar:** V1/V2'de hazır `large-v3-turbo` kullanmaya devam et. Türkçe doğruluk kullanıcı için yetersiz hale gelirse, **model boyutunu büyütmek yerine** Türkçe veri ile LoRA fine-tune yapmaya geç.
+
+### Bağlam
+
+Off-the-shelf large-v3 Türkçe WER tipik olarak ~%12-14 (temiz akademik veri); gürültü/ağız varyasyonunda daha kötü (%18-25). Faz 0 benchmark'ımız bu rakamı sayısallaştırmadı — sadece kalite gözlemi yaptık (large-v3-turbo "iyi", small "kötü"). Türkçe için anlamlı bir WER ölçümü Faz 4 R&D olur.
+
+### Alternatifler
+
+1. **Daha büyük model** (`large-v3` full) — VRAM 1.6GB → 3.2GB, hız %50 daha yavaş, Türkçe WER iyileşmesi belirsiz/küçük
+2. **LoRA fine-tune Türkçe veri ile** — raporlarda %50'ye varan WER düşüşü (~%14 → ~%7). Eğitim maliyeti tek seferlik, çıkarım maliyeti aynı, model boyutu marjinal artar (LoRA weights ~50MB)
+3. **Whisper distilled Türkçe modeli** — community fine-tune'ları HF Hub'da var; kalite garantisiz, lisans takip et
+
+### Niye LoRA tercih?
+
+- Hesap maliyeti makul (~A100 GPU 24 saat, $50-100 cloud) — kişisel proje için yapılabilir
+- WER iyileştirme darboğaza vurur (büyütmek vurmuyor)
+- Çıkarım perf hız değişmiyor — kullanıcının makinesi aynı
+- Açık kaynak portfolio'ya katkı: "Türkçe Whisper LoRA" kendi başına proje
+
+### Maliyet
+
+- **Veri toplama:** 100-500 saat Türkçe transkript (Common Voice TR ~80 saat + LibriVox TR + kendi kayıtların)
+- **Eğitim:** PEFT + transformers, ~24-48 saat A100 (Lambda, Vast.ai, kişisel)
+- **Doğrulama:** Holdout test seti üzerinde WER ölç, hazır model ile karşılaştır
+- **Toplam:** 2-4 haftalık serious R&D, V1 kullanıcı akışını engellemez
+
+### Ne zaman?
+
+ROADMAP Faz 4+ (opsiyonel). V1 kullanıcı geri bildirimi "doğruluk yetersiz" yönündeyse priorite alır. Şu anki hipotez: large-v3-turbo Türkçe için "yeterince iyi" — kullanıcı raporu olmadan R&D yatırımı yapma.
+
+**Geri dönüş maliyeti:** Eğitilmiş LoRA weights ayrı dosya, fine-tune'u opt-in setting yapabilirsin. Geri çevirilebilir.
 
 ---
 
